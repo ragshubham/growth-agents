@@ -8,6 +8,18 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 /* =====================================================
+   STATUS COLORS (typed map)
+   ===================================================== */
+const STATUS_COLOR = {
+  waitlist: 'emerald',
+  pilots: 'blue',
+  cac: 'slate',
+  budget: 'slate',
+} as const;
+
+type StatusColor = typeof STATUS_COLOR[keyof typeof STATUS_COLOR];
+
+/* =====================================================
    CONFIG
    ===================================================== */
 const CALENDLY_URL = 'https://calendly.com/ragshubham/30min';
@@ -1945,7 +1957,7 @@ function MetricShowcaseSection() {
             label="Brands waitlisted"
             sublabel="growing interest"
             value={waitlist.toString()}
-            statusColor={statusColor.waitlist}
+            statusColor={STATUS_COLOR.waitlist}
             badge={
               <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -1958,7 +1970,7 @@ function MetricShowcaseSection() {
             label="Active pilots"
             sublabel="hands on trials"
             value={pilots.toString()}
-            statusColor={statusColor.pilots}
+            statusColor={STATUS_COLOR.pilots}
             badge={
               <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-blue-50 text-blue-700 ring-1 ring-blue-200">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" />
@@ -1972,7 +1984,7 @@ function MetricShowcaseSection() {
             sublabel="vs baseline"
             value={cacImprovement.toString()}
             suffix="%"
-            statusColor={statusColor.cac}
+            statusColor={STATUS_COLOR.cac}
             badge={
               <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-slate-100 text-slate-700 ring-1 ring-slate-200">
                 uptrend
@@ -1985,7 +1997,7 @@ function MetricShowcaseSection() {
             sublabel="to higher ROI"
             prefix="$"
             value={budget.toLocaleString()}
-            statusColor={statusColor.budget}
+            statusColor={STATUS_COLOR.budget}
             badge={
               <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-slate-100 text-slate-700 ring-1 ring-slate-200">
                 last 30 days
