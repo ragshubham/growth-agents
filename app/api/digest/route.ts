@@ -2,7 +2,7 @@
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-import { dmSlack } from "@/lib/slack_dm";
+import { dmSlack } from "../../../lib/slack_dm";
 import React from "react";
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
