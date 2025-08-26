@@ -21,32 +21,42 @@ function baseUrl(req: Request) {
 
 export async function GET(req: Request) {
   try {
-    const mock = new URL(req.url).searchParams.get("mock");
+    // a) read query params (mock and optional to=)
+    const url = new URL(req.url);
+    const mock = url.searchParams.get("mock");
+    const toOverride = url.searchParams.get("to");
 
+    // fetch alerts from your API (no caching)
     const res = await fetch(`${baseUrl(req)}/api/alerts`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to read alerts");
     const { alerts, updatedAt } = await res.json();
 
+    // if mock=1 or resend not configured, just return JSON (no email sent)
     if (mock || !resend) {
-      console.log("[digest] (mock) would send to", TO, alerts);
+      console.log("[digest] (mock) would send to", toOverride || TO, alerts);
       return NextResponse.json({ ok: true, mocked: true, alerts, updatedAt });
     }
 
-    // ✅ Use React.createElement to avoid JSX in .ts
+    // render the email HTML (IMPORTANT: await here)
     const element = React.createElement(DailyShieldEmail, {
       alerts,
       asOf: updatedAt,
     });
-    const html = render(element);
+    const html = await render(element); // <-- await so it's a string
 
+    // b) use toOverride || TO
     await resend.emails.send({
       from: "Growth Agents <onboarding@resend.dev>",
-      to: TO,
+      to: toOverride || TO,
       subject: `Shield Daily Digest — ${new Date(updatedAt).toLocaleDateString()}`,
       html,
     });
 
-    return NextResponse.json({ ok: true, sentTo: TO, count: alerts?.length ?? 0 });
+    return NextResponse.json({
+      ok: true,
+      sentTo: toOverride || TO,
+      count: alerts?.length ?? 0,
+    });
   } catch (e: any) {
     console.error("[/api/digest] error:", e);
     return NextResponse.json(
