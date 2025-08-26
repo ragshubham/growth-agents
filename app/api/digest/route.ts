@@ -2,6 +2,7 @@
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+import { logRun } from "../../../lib/slack_log";
 import { dmSlack } from "../../../lib/slack_dm";
 import React from "react";
 import { NextResponse } from "next/server";
@@ -44,10 +45,11 @@ export async function GET(req: Request) {
     if (!res.ok) throw new Error("Failed to read alerts");
     const { alerts, updatedAt } = await res.json();
 
-    // MOCK PATH (or when Resend not configured): return JSON + DM mock
+    // MOCK PATH (or when Resend not configured): return JSON + DM mock + LOG
     if (isMock || !resend) {
       console.log("[digest] (mock) would send to", toOverride || TO, alerts);
       await dmSlack(`🛡️ [Mock] Digest: ${alerts?.length ?? 0} alerts · ${updatedAt}`);
+      await logRun({ ok: true, count: alerts?.length ?? 0, updatedAt, mode: "mock" });
       return NextResponse.json({ ok: true, mocked: true, alerts, updatedAt });
     }
 
@@ -65,8 +67,9 @@ export async function GET(req: Request) {
       html,
     });
 
-    // DM summary after real send
+    // DM + LOG summary after real send
     await dmSlack(`🛡️ Digest sent to ${toOverride || TO} · ${alerts?.length ?? 0} alerts · ${updatedAt}`);
+    await logRun({ ok: true, count: alerts?.length ?? 0, updatedAt, mode: "real" });
 
     return NextResponse.json({
       ok: true,
@@ -74,6 +77,16 @@ export async function GET(req: Request) {
       count: alerts?.length ?? 0,
     });
   } catch (e: any) {
+    // failure log (use current time if we don't have updatedAt)
+    try {
+      await logRun({
+        ok: false,
+        count: 0,
+        updatedAt: new Date().toISOString(),
+        mode: "real",
+        error: e?.message
+      });
+    } catch {}
     console.error("[/api/digest] error:", e);
     return NextResponse.json(
       { ok: false, error: e?.message ?? "Unknown error" },
