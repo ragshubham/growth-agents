@@ -8,13 +8,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 /* =====================================================
-   STATUS COLORS (typed map)
+   STATUS COLORS (must match StatCard: "green" | "red")
    ===================================================== */
 const STATUS_COLOR = {
-  waitlist: 'emerald',
-  pilots: 'blue',
-  cac: 'slate',
-  budget: 'slate',
+  waitlist: 'green',
+  pilots: 'green',
+  cac: 'green',     // set 'red' if CAC is worsening
+  budget: 'green',  // set 'red' if reallocation indicates a negative
 } as const;
 
 type StatusColor = typeof STATUS_COLOR[keyof typeof STATUS_COLOR];
@@ -1874,7 +1874,7 @@ function StatCard({
   prefix?: string;
   suffix?: string;
   badge?: React.ReactNode;
-  statusColor: "green" | "red";
+  statusColor: StatusColor;
 }) {
   return (
     <div className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
