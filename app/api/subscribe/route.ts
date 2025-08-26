@@ -24,7 +24,7 @@ export async function POST(req: Request) {
       text: `Email: ${email}\nSource: landing-page`,
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, message: "Subscribed!" });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
   }
