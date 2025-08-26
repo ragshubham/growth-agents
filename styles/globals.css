@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth type */
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+/* Optional helpers if you add docs/legal prose later */
+.prose pre { @apply overflow-x-auto rounded-xl border p-4; }

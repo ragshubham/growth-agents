@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+:root{ --mx:50vw; --my:50vh; }
+*{ outline:none }
+::selection{ background:#111; color:#fff }
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 18s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { transform: scale(1); opacity: .35; }
+  50%      { transform: scale(1.05); opacity: .48; }
+}
