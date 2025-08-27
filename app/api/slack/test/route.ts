@@ -56,7 +56,8 @@ export async function POST() {
       ],
     };
 
-    const resp = await fetch(hook, {
+    // Safe cast since we validated above
+    const resp = await fetch(hook as string, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
