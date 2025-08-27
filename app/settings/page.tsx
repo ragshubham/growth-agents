@@ -23,10 +23,25 @@ export default function SettingsPage() {
     sheetCsvUrl: '',
   });
 
+  // --- helpers ---
+  function isSlackWebhook(url?: string) {
+    if (!url) return false;
+    try {
+      const u = new URL(url);
+      if (u.hostname !== 'hooks.slack.com') return false;
+      const parts = u.pathname.split('/').filter(Boolean); // ['services','T...','B...','...']
+      return parts[0] === 'services' && parts.length === 4;
+    } catch {
+      return false;
+    }
+  }
+  const slackConnected = isSlackWebhook(form.slackWebhookUrl);
+
+  // --- load settings ---
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/settings');
+        const res = await fetch('/api/settings', { cache: 'no-store' });
         const data: SettingsResp = await res.json();
         if (data) {
           setForm({
@@ -42,18 +57,24 @@ export default function SettingsPage() {
     })();
   }, []);
 
+  // --- save settings ---
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setMsg('');
-    const res = await fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    const j = await res.json().catch(() => ({}));
-    setSaving(false);
-    setMsg(j?.ok ? 'Saved ✓' : j?.error || 'Save failed');
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const j = await res.json().catch(() => ({}));
+      setMsg(j?.ok ? 'Saved ✓' : j?.error || 'Save failed');
+    } catch (e: any) {
+      setMsg(e?.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (loading) {
@@ -105,16 +126,43 @@ export default function SettingsPage() {
 
           {/* Slack */}
           <section className="rounded-2xl border border-neutral-200 bg-white/70 p-5 shadow-sm backdrop-blur space-y-3">
-            <h2 className="text-sm font-medium">Slack</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium">Slack</h2>
+
+              {/* Status pill */}
+              <span className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px]">
+                <span
+                  className={`inline-block h-2 w-2 rounded-full ${
+                    slackConnected ? 'bg-emerald-500' : 'bg-neutral-400'
+                  }`}
+                />
+                <span className={slackConnected ? 'text-emerald-700' : 'text-neutral-600'}>
+                  {slackConnected ? 'Connected' : 'Not connected'}
+                </span>
+              </span>
+            </div>
+
             <p className="text-xs text-neutral-600">
               Paste an incoming webhook URL to receive digests/alerts in your Slack.
             </p>
+
             <input
               value={form.slackWebhookUrl}
               onChange={(e) => setForm({ ...form, slackWebhookUrl: e.target.value })}
-              placeholder="https://hooks.slack.com/services/…"
+              placeholder="https://hooks.slack.com/services/T000/B000/XXXX"
               className="w-full px-3 py-2 rounded-lg border border-neutral-300 text-sm"
             />
+
+            {/* gentle validation hint */}
+            {!slackConnected && form.slackWebhookUrl.trim() && (
+              <p className="text-[11px] text-amber-700">
+                This doesn’t look like a Slack webhook. Expected format:
+                <code> https://hooks.slack.com/services/T.../B.../...</code>
+              </p>
+            )}
+
+            {/* Send test button (only when connected) */}
+            {slackConnected && <SendSlackTest />}
           </section>
 
           {/* Data source (Phase 1 CSV) */}
@@ -145,5 +193,40 @@ export default function SettingsPage() {
         </form>
       </div>
     </main>
+  );
+}
+
+/* ---------- small client helper to send test to Slack ---------- */
+function SendSlackTest() {
+  const [sending, setSending] = useState(false);
+  const [note, setNote] = useState<string>('');
+
+  async function send() {
+    setSending(true);
+    setNote('');
+    try {
+      const r = await fetch('/api/slack/test', { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (j?.ok) setNote('Sent ✓ Check your Slack channel.');
+      else setNote(j?.error || 'Failed to send test.');
+    } catch (e: any) {
+      setNote(e?.message || 'Failed to send test.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={send}
+        disabled={sending}
+        className="rounded-xl bg-black px-3 py-2 text-sm font-semibold text-white shadow hover:brightness-110 disabled:opacity-60"
+      >
+        {sending ? 'Sending…' : 'Send test to Slack'}
+      </button>
+      {note && <span className="text-sm text-neutral-600">{note}</span>}
+    </div>
   );
 }
