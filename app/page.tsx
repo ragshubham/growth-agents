@@ -272,7 +272,7 @@ function Header() {
           <a href="#impact" className="hover:text-white">Impact</a>
           <a href="#globe" className="hover:text-white">Why It Wins</a>
           <a href="#case" className="hover:text-white">Proof</a>
-          <PrimaryCTA href={CALENDLY_URL}>Start free pilot</PrimaryCTA>
+          <PrimaryCTA href="/signin">Log In</PrimaryCTA>
         </nav>
       </div>
     </header>
