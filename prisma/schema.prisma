@@ -4,9 +4,7 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  // pooled connection for your app at runtime
   url       = env("DATABASE_URL")
-  // direct (non-pooler) connection for migrations
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
