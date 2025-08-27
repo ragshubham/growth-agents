@@ -1,3 +1,4 @@
+// app/api/cron/digest/route.ts
 export const runtime = 'nodejs';
 export const dynamic = "force-dynamic";
 
@@ -5,9 +6,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { postToSlack } from "@/lib/slack";
 
+// ✅ allow either Authorization header (manual) OR x-vercel-cron header (Vercel scheduler)
 function ok(req: Request) {
   const header = req.headers.get("authorization") || "";
-  return header === `Bearer ${process.env.CRON_SECRET}`;
+  const isSecret = header === `Bearer ${process.env.CRON_SECRET}`;
+  const isVercelCron = req.headers.get("x-vercel-cron") === "1";
+  return isSecret || isVercelCron;
 }
 
 export async function GET(req: Request) {
@@ -17,9 +21,15 @@ export async function GET(req: Request) {
     // quick DB ping so we fail early with a readable error
     await prisma.$queryRaw`SELECT 1`;
 
+    const env = process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
+    const byCron = req.headers.get("x-vercel-cron") === "1";
+
     // allow ?dry=1 to skip Slack calls during testing
     const url = new URL(req.url);
-    const dry = url.searchParams.get("dry") === "1";
+    const dryParam = url.searchParams.get("dry") === "1";
+    const dry = !env.includes("production") ? true : dryParam; // 🔒 non-prod always dry
+
+    console.log("[/api/cron/digest]", { env, byCron, dry });
 
     const users = await prisma.user.findMany({
       where: { onboardingComplete: true, slackWebhookUrl: { not: null } },
@@ -31,13 +41,18 @@ export async function GET(req: Request) {
       if (!u.slackWebhookUrl) continue;
       if (dry) { sent++; continue; }
 
+      const prefix = byCron ? "🕒 Cron" : "🧪 Manual";
+      const title  = `${prefix} · Daily Digest (MVP)`;
+
       const res = await postToSlack(u.slackWebhookUrl, {
-        text: `Daily digest for ${u.companyName || u.email}`,
+        text: `${title} for ${u.companyName || u.email}`,
         blocks: [
-          { type: "header", text: { type: "plain_text", text: "📈 Daily Digest (MVP)" } },
+          { type: "header", text: { type: "plain_text", text: `📈 ${title}` } },
           { type: "section", text: { type: "mrkdwn", text: "Good morning! Placeholder digest.\n• Metric A: 123\n• Metric B: 4.56%\n• Alerts: none" } },
+          { type: "context", elements: [{ type: "mrkdwn", text: `Env: *${env}* • ${new Date().toLocaleString()}` }] }
         ],
       });
+
       if (res.ok) sent++;
       else console.error("Slack error:", res.error);
     }
