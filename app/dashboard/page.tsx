@@ -2,7 +2,8 @@
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { redirect } from 'next/navigation';
-import { Shield, CheckCircle2, AlertTriangle, Mail, Clock, Activity } from 'lucide-react';
+import { CheckCircle2, Mail, Clock, Activity } from 'lucide-react';
+import Topbar from '@/components/Topbar';
 
 type Health = { db?: string; resend?: string; cron?: string };
 
@@ -20,7 +21,6 @@ export default async function DashboardPage() {
   // --- Fetch health server-side (no client JS required) ---
   let health: Health = {};
   try {
-    // Using NEXTAUTH_URL if present, else relative path
     const base = process.env.NEXTAUTH_URL ?? '';
     const res = await fetch(`${base}/api/health`, { cache: 'no-store' });
     health = await res.json();
@@ -33,18 +33,7 @@ export default async function DashboardPage() {
   // --- UI ---
   return (
     <main className="min-h-screen bg-gradient-to-b from-neutral-50 to-white">
-      {/* Topbar */}
-      <div className="sticky top-0 z-20 border-b bg-white/70 backdrop-blur supports-[backdrop-filter]:bg-white/50">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-semibold">
-            <Shield className="h-5 w-5" />
-            <span>Shield Agent</span>
-          </div>
-          <div className="text-xs text-neutral-600">
-            Signed in as <span className="font-medium">{session.user.email}</span>
-          </div>
-        </div>
-      </div>
+      <Topbar email={session.user.email} />
 
       {/* Header */}
       <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -187,7 +176,6 @@ function ActionCard({
       </div>
       <p className="mt-2 text-sm text-neutral-600">{desc}</p>
       <div className="mt-4">
-        {/* open in new tab so you keep the dashboard open */}
         <a
           href={href}
           target="_blank"
