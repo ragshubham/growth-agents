@@ -1,4 +1,3 @@
-// app/api/cron/digest/route.ts
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -6,7 +5,6 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { postToSlack } from '@/lib/slack';
 
-// allow manual Authorization or vercel cron header
 function ok(req: Request) {
   const header = req.headers.get('authorization') || '';
   const isSecret = header === `Bearer ${process.env.CRON_SECRET}`;
@@ -18,33 +16,24 @@ export async function GET(req: Request) {
   if (!ok(req)) return new NextResponse('Unauthorized', { status: 401 });
 
   try {
-    // sanity ping
     await prisma.$queryRaw`SELECT 1`;
 
     const env = process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
     const byCron = req.headers.get('x-vercel-cron') === '1';
-
     const url = new URL(req.url);
     const dryParam = url.searchParams.get('dry') === '1';
     const dry = !env.includes('production') ? true : dryParam; // non-prod always dry
 
-    // 🔁 NEW: read from Company via relation
-    const rows = await prisma.user.findMany({
-      where: {
-        onboardingComplete: true,
-        companyId: { not: null },
-      },
-      select: {
-        email: true,
-        company: {
-          select: {
-            name: true,
-            slackWebhookUrl: true,
-            timezone: true,
-          },
-        },
-      },
-    });
+    // ✅ pull Company fields via relation (no User.companyName etc)
+    // app/api/cron/digest/route.ts
+// ...
+const rows = await prisma.user.findMany({
+  where: { companyId: { not: null } },   // ← remove onboardingComplete
+  select: {
+    email: true,
+    company: { select: { name: true, slackWebhookUrl: true, timezone: true } },
+  },
+});
 
     let sent = 0;
     for (const r of rows) {
@@ -54,7 +43,7 @@ export async function GET(req: Request) {
       if (dry) { sent++; continue; }
 
       const prefix = byCron ? '🕒 Cron' : '🧪 Manual';
-      const title  = `${prefix} · Daily Digest (MVP)`;
+      const title = `${prefix} · Daily Digest (MVP)`;
 
       const res = await postToSlack(webhook, {
         text: `${title} for ${companyName}`,
@@ -64,9 +53,7 @@ export async function GET(req: Request) {
           { type: 'context', elements: [{ type: 'mrkdwn', text: `Env: *${env}* • ${new Date().toLocaleString()}` }] }
         ],
       });
-
-      if (res.ok) sent++;
-      else console.error('Slack error:', res.error);
+      if (res.ok) sent++; else console.error('Slack error:', res.error);
     }
 
     return NextResponse.json({ ok: true, users: rows.length, sent, dry });
