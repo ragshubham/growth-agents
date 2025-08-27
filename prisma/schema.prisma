@@ -78,6 +78,7 @@ model Company {
   name            String
   timezone        String    @default("UTC")
   slackWebhookUrl String?
+  sheetCsvUrl     String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
