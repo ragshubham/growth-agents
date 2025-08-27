@@ -1,73 +1,58 @@
-// app/api/digest/route.ts
-export const dynamic = 'force-dynamic';
+// app/api/cron/digest/route.ts
+
 export const runtime = 'nodejs';
+export const dynamic = "force-dynamic";
 
-import { logRun } from "../../../lib/slack_log";
-import { dmSlack } from "../../../lib/slack_dm";
-import { buildAlertBlocks } from "../../../lib/slack_blocks"; // 👈 add this
-import React from "react";
 import { NextResponse } from "next/server";
-import { Resend } from "resend";
-import { render } from "@react-email/render";
-import DailyShieldEmail from "@/app/emails/DailyShieldEmail";
+import { prisma } from "@/lib/prisma";
+import { postToSlack } from "@/lib/slack";
 
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-const TO = process.env.RESEND_TO || "you@example.com";
-
-function baseUrl(req: Request) {
-  const url = new URL(req.url);
-  return `${url.protocol}//${url.host}`;
+// ✅ allow either Authorization header (manual/local) OR x-vercel-cron header (Vercel scheduler)
+function ok(req: Request) {
+  const header = req.headers.get("authorization") || "";
+  const isSecret = header === `Bearer ${process.env.CRON_SECRET}`;
+  const isVercelCron = req.headers.get("x-vercel-cron") === "1";
+  return isSecret || isVercelCron;
 }
 
 export async function GET(req: Request) {
+  if (!ok(req)) return new NextResponse("Unauthorized", { status: 401 });
+
   try {
+    // quick DB ping so we fail early with a readable error
+    await prisma.$queryRaw`SELECT 1`;
+
+    // allow ?dry=1 to skip Slack calls during testing
     const url = new URL(req.url);
-    const isCron = req.headers.get("x-vercel-cron") === "1";
-    const isMock = url.searchParams.get("mock");
-    const toOverride = url.searchParams.get("to");
+    const dry = url.searchParams.get("dry") === "1";
 
-    if (!isMock && !isCron && !toOverride) {
-      return NextResponse.json(
-        { ok: false, error: "No permission to send (use ?mock=1 or ?to=...)" },
-        { status: 403 }
-      );
-    }
-
-    const res = await fetch(`${baseUrl(req)}/api/alerts`, { cache: "no-store" });
-    if (!res.ok) throw new Error("Failed to read alerts");
-    const { alerts, updatedAt } = await res.json();
-
-    // MOCK PATH
-    if (isMock || !resend) {
-      const blocks = buildAlertBlocks(alerts, updatedAt, "🧪 Mock · Shield Digest");
-      await dmSlack(`Mock Digest · ${alerts?.length ?? 0} alerts`, blocks);
-      await logRun({ ok: true, count: alerts?.length ?? 0, updatedAt, mode: "mock" });
-      return NextResponse.json({ ok: true, mocked: true, alerts, updatedAt });
-    }
-
-    // REAL SEND PATH
-    const element = React.createElement(DailyShieldEmail, { alerts, asOf: updatedAt });
-    const html = await render(element);
-
-    await resend.emails.send({
-      from: "Growth Agents <onboarding@resend.dev>",
-      to: toOverride || TO,
-      subject: `Shield Daily Digest — ${new Date(updatedAt).toLocaleDateString()}`,
-      html,
+    const users = await prisma.user.findMany({
+      where: { onboardingComplete: true, slackWebhookUrl: { not: null } },
+      select: { companyName: true, slackWebhookUrl: true, email: true },
     });
 
-    const blocks = buildAlertBlocks(alerts, updatedAt, "🛡️ Shield Digest");
-    await dmSlack(`Digest sent · ${alerts?.length ?? 0} alerts`, blocks);
-    await logRun({ ok: true, count: alerts?.length ?? 0, updatedAt, mode: "real" });
+    let sent = 0;
+    for (const u of users) {
+      if (!u.slackWebhookUrl) continue;
+      if (dry) { sent++; continue; }
 
-    return NextResponse.json({ ok: true, sentTo: toOverride || TO, count: alerts?.length ?? 0 });
-  } catch (e: any) {
-    try {
-      await logRun({
-        ok: false, count: 0, updatedAt: new Date().toISOString(), mode: "real", error: e?.message
+      const res = await postToSlack(u.slackWebhookUrl, {
+        text: `Daily digest for ${u.companyName || u.email}`,
+        blocks: [
+          { type: "header", text: { type: "plain_text", text: "📈 Daily Digest (MVP)" } },
+          { type: "section", text: { type: "mrkdwn", text: "Good morning! Placeholder digest.\n• Metric A: 123\n• Metric B: 4.56%\n• Alerts: none" } },
+        ],
       });
-    } catch {}
-    console.error("[/api/digest] error:", e);
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+      if (res.ok) sent++;
+      else console.error("Slack error:", res.error);
+    }
+
+    return NextResponse.json({ ok: true, users: users.length, sent, dry });
+  } catch (e: any) {
+    console.error("CRON /digest error:", e?.message, e?.stack);
+    return NextResponse.json(
+      { ok: false, error: e?.message || "Unknown error" },
+      { status: 500 }
+    );
   }
 }
