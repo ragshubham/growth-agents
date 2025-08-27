@@ -2010,6 +2010,41 @@ function MetricShowcaseSection() {
   );
 }
 
+// somewhere inside your existing component markup:
+function UsersPreview() {
+  const [users, setUsers] = React.useState<Array<{id:string;name:string|null;email:string|null;image:string|null}>>([])
+  const [loading, setLoading] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    let mounted = true
+    setLoading(true)
+    fetch('/api/users')
+      .then(r => r.json())
+      .then((data) => {
+        if (!mounted) return
+        if (data.ok) setUsers(data.users || [])
+        else setError(data.error || 'Failed to load')
+      })
+      .catch(() => mounted && setError('Network error'))
+      .finally(() => mounted && setLoading(false))
+    return () => { mounted = false }
+  }, [])
+
+  return (
+    <div className="mt-6 rounded-xl border border-white/10 bg-white/5 p-4">
+      <div className="text-sm font-semibold text-slate-200">Users (Neon → Prisma)</div>
+      {loading && <div className="mt-2 text-sm text-slate-400">Loading…</div>}
+      {error && <div className="mt-2 text-sm text-rose-400">{error}</div>}
+      {!loading && !error && (
+        <pre className="mt-2 max-h-64 overflow-auto text-xs text-slate-300">
+{JSON.stringify(users, null, 2)}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 /* =====================================================
    FOOTER — MVP (no Careers/Security/Legal)
    ===================================================== */
