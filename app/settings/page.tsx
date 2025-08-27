@@ -168,7 +168,6 @@ export default function SettingsPage() {
               className="w-full px-3 py-2 rounded-lg border border-neutral-300 text-sm"
             />
 
-            {/* gentle validation hint */}
             {!slackConnected && form.slackWebhookUrl.trim() && (
               <p className="text-[11px] text-amber-700">
                 This doesn’t look like a Slack webhook. Expected format:
@@ -176,11 +175,19 @@ export default function SettingsPage() {
               </p>
             )}
 
-            {/* Send test button (only when connected) */}
             {slackConnected && <SendSlackTest />}
           </section>
 
-          {/* Data source (Phase 1 CSV) */}
+          {/* Email */}
+          <section className="rounded-2xl border border-neutral-200 bg-white/70 p-5 shadow-sm backdrop-blur space-y-3">
+            <h2 className="text-sm font-medium">Email</h2>
+            <p className="text-xs text-neutral-600">
+              Send yourself a sample digest email to confirm email is working.
+            </p>
+            <SendEmailTest />
+          </section>
+
+          {/* Data source */}
           <section className="rounded-2xl border border-neutral-200 bg-white/70 p-5 shadow-sm backdrop-blur space-y-3">
             <h2 className="text-sm font-medium">Data source (Phase 1)</h2>
             <p className="text-xs text-neutral-600">
@@ -215,7 +222,7 @@ export default function SettingsPage() {
   );
 }
 
-/* ---------- small client helper to send test to Slack ---------- */
+/* ---------- helpers ---------- */
 function SendSlackTest() {
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState<string>('');
@@ -244,6 +251,40 @@ function SendSlackTest() {
         className="rounded-xl bg-black px-3 py-2 text-sm font-semibold text-white shadow hover:brightness-110 disabled:opacity-60"
       >
         {sending ? 'Sending…' : 'Send test to Slack'}
+      </button>
+      {note && <span className="text-sm text-neutral-600">{note}</span>}
+    </div>
+  );
+}
+
+function SendEmailTest() {
+  const [sending, setSending] = useState(false);
+  const [note, setNote] = useState<string>('');
+
+  async function send() {
+    setSending(true);
+    setNote('');
+    try {
+      const r = await fetch('/api/email/test', { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (j?.ok) setNote('Sent ✓ Check your inbox.');
+      else setNote(j?.error || 'Failed to send test.');
+    } catch (e: any) {
+      setNote(e?.message || 'Failed to send test.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={send}
+        disabled={sending}
+        className="rounded-xl bg-black px-3 py-2 text-sm font-semibold text-white shadow hover:brightness-110 disabled:opacity-60"
+      >
+        {sending ? 'Sending…' : 'Send test email'}
       </button>
       {note && <span className="text-sm text-neutral-600">{note}</span>}
     </div>
