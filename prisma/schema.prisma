@@ -35,17 +35,22 @@ model Session {
 }
 
 model User {
-  id                 String    @id @default(cuid())
-  name               String?
-  email              String?   @unique
-  emailVerified      DateTime?
-  image              String?
-  companyName        String?
-  timezone           String?
-  slackWebhookUrl    String?
-  onboardingComplete Boolean   @default(false)
-  accounts           Account[]
-  sessions           Session[]
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  companyId     String?
+  company       Company?  @relation(fields: [companyId], references: [id])
+
+  onboarded     Boolean   @default(false) @map("onboardingComplete")
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt @default(now())  // 👈 add @default(now())
+
+  accounts      Account[]
+  sessions      Session[]
 }
 
 model VerificationToken {
@@ -54,4 +59,27 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+model DigestRun {
+  id        String   @id @default(cuid())
+  company   String?
+  email     String?
+  env       String
+  mode      String   // "cron" | "manual" | "preview"
+  date      DateTime @default(now())
+  alerts    Int
+  success   Boolean
+  error     String?
+}
+
+model Company {
+  id              String    @id @default(cuid())
+  name            String
+  timezone        String    @default("UTC")
+  slackWebhookUrl String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  users           User[]
 }

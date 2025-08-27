@@ -1,68 +1,77 @@
 // app/api/cron/digest/route.ts
 export const runtime = 'nodejs';
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { postToSlack } from "@/lib/slack";
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { postToSlack } from '@/lib/slack';
 
-// ✅ allow either Authorization header (manual) OR x-vercel-cron header (Vercel scheduler)
+// allow manual Authorization or vercel cron header
 function ok(req: Request) {
-  const header = req.headers.get("authorization") || "";
+  const header = req.headers.get('authorization') || '';
   const isSecret = header === `Bearer ${process.env.CRON_SECRET}`;
-  const isVercelCron = req.headers.get("x-vercel-cron") === "1";
+  const isVercelCron = req.headers.get('x-vercel-cron') === '1';
   return isSecret || isVercelCron;
 }
 
 export async function GET(req: Request) {
-  if (!ok(req)) return new NextResponse("Unauthorized", { status: 401 });
+  if (!ok(req)) return new NextResponse('Unauthorized', { status: 401 });
 
   try {
-    // quick DB ping so we fail early with a readable error
+    // sanity ping
     await prisma.$queryRaw`SELECT 1`;
 
     const env = process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
-    const byCron = req.headers.get("x-vercel-cron") === "1";
+    const byCron = req.headers.get('x-vercel-cron') === '1';
 
-    // allow ?dry=1 to skip Slack calls during testing
     const url = new URL(req.url);
-    const dryParam = url.searchParams.get("dry") === "1";
-    const dry = !env.includes("production") ? true : dryParam; // 🔒 non-prod always dry
+    const dryParam = url.searchParams.get('dry') === '1';
+    const dry = !env.includes('production') ? true : dryParam; // non-prod always dry
 
-    console.log("[/api/cron/digest]", { env, byCron, dry });
-
-    const users = await prisma.user.findMany({
-      where: { onboardingComplete: true, slackWebhookUrl: { not: null } },
-      select: { companyName: true, slackWebhookUrl: true, email: true },
+    // 🔁 NEW: read from Company via relation
+    const rows = await prisma.user.findMany({
+      where: {
+        onboardingComplete: true,
+        companyId: { not: null },
+      },
+      select: {
+        email: true,
+        company: {
+          select: {
+            name: true,
+            slackWebhookUrl: true,
+            timezone: true,
+          },
+        },
+      },
     });
 
     let sent = 0;
-    for (const u of users) {
-      if (!u.slackWebhookUrl) continue;
+    for (const r of rows) {
+      const companyName = r.company?.name || r.email || 'Your company';
+      const webhook = r.company?.slackWebhookUrl;
+      if (!webhook) continue;
       if (dry) { sent++; continue; }
 
-      const prefix = byCron ? "🕒 Cron" : "🧪 Manual";
+      const prefix = byCron ? '🕒 Cron' : '🧪 Manual';
       const title  = `${prefix} · Daily Digest (MVP)`;
 
-      const res = await postToSlack(u.slackWebhookUrl, {
-        text: `${title} for ${u.companyName || u.email}`,
+      const res = await postToSlack(webhook, {
+        text: `${title} for ${companyName}`,
         blocks: [
-          { type: "header", text: { type: "plain_text", text: `📈 ${title}` } },
-          { type: "section", text: { type: "mrkdwn", text: "Good morning! Placeholder digest.\n• Metric A: 123\n• Metric B: 4.56%\n• Alerts: none" } },
-          { type: "context", elements: [{ type: "mrkdwn", text: `Env: *${env}* • ${new Date().toLocaleString()}` }] }
+          { type: 'header', text: { type: 'plain_text', text: `📈 ${title}` } },
+          { type: 'section', text: { type: 'mrkdwn', text: `Good morning! Placeholder digest for *${companyName}*.\n• Metric A: 123\n• Metric B: 4.56%\n• Alerts: none` } },
+          { type: 'context', elements: [{ type: 'mrkdwn', text: `Env: *${env}* • ${new Date().toLocaleString()}` }] }
         ],
       });
 
       if (res.ok) sent++;
-      else console.error("Slack error:", res.error);
+      else console.error('Slack error:', res.error);
     }
 
-    return NextResponse.json({ ok: true, users: users.length, sent, dry });
+    return NextResponse.json({ ok: true, users: rows.length, sent, dry });
   } catch (e: any) {
-    console.error("CRON /digest error:", e?.message, e?.stack);
-    return NextResponse.json(
-      { ok: false, error: e?.message || "Unknown error" },
-      { status: 500 }
-    );
+    console.error('CRON /digest error:', e?.message, e?.stack);
+    return NextResponse.json({ ok: false, error: e?.message || 'Unknown error' }, { status: 500 });
   }
 }
