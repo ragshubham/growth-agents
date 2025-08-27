@@ -15,7 +15,7 @@ type SettingsResp = {
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [form, setForm] = useState({
     companyName: '',
     timezone: 'Asia/Kolkata',
@@ -23,7 +23,7 @@ export default function SettingsPage() {
     sheetCsvUrl: '',
   });
 
-  // --- helpers ---
+  // helpers
   function isSlackWebhook(url?: string) {
     if (!url) return false;
     try {
@@ -36,42 +36,56 @@ export default function SettingsPage() {
     }
   }
   const slackConnected = isSlackWebhook(form.slackWebhookUrl);
+  const canSave = form.companyName.trim().length > 0 && form.timezone.trim().length > 0;
 
-  // --- load settings ---
+  // load settings
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch('/api/settings', { cache: 'no-store' });
         const data: SettingsResp = await res.json();
-        if (data) {
-          setForm({
-            companyName: data.companyName || '',
-            timezone: data.timezone || 'Asia/Kolkata',
-            slackWebhookUrl: data.slackWebhookUrl || '',
-            sheetCsvUrl: data.sheetCsvUrl || '',
-          });
-        }
+        setForm({
+          companyName: data.companyName || '',
+          timezone: data.timezone || 'Asia/Kolkata',
+          slackWebhookUrl: data.slackWebhookUrl || '',
+          sheetCsvUrl: data.sheetCsvUrl || '',
+        });
+      } catch {
+        setMsg({ text: 'Failed to load settings', ok: false });
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
-  // --- save settings ---
+  // save settings
   async function save(e: React.FormEvent) {
     e.preventDefault();
+    if (!canSave) {
+      setMsg({ text: 'Company name and timezone are required.', ok: false });
+      return;
+    }
+    if (form.slackWebhookUrl.trim() && !slackConnected) {
+      setMsg({ text: 'That does not look like a valid Slack webhook URL.', ok: false });
+      return;
+    }
+
     setSaving(true);
-    setMsg('');
+    setMsg(null);
     try {
       const res = await fetch('/api/settings', {
-        method: 'PUT',
+        method: 'PUT', // your API implements PUT
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      const j = await res.json().catch(() => ({}));
-      setMsg(j?.ok ? 'Saved ✓' : j?.error || 'Save failed');
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok || !j?.ok) {
+        setMsg({ text: j?.error || 'Save failed', ok: false });
+      } else {
+        setMsg({ text: 'Saved ✓', ok: true });
+      }
     } catch (e: any) {
-      setMsg(e?.message || 'Save failed');
+      setMsg({ text: e?.message || 'Save failed', ok: false });
     } finally {
       setSaving(false);
     }
@@ -106,6 +120,7 @@ export default function SettingsPage() {
                 value={form.companyName}
                 onChange={(e) => setForm({ ...form, companyName: e.target.value })}
                 className="w-full px-3 py-2 rounded-lg border border-neutral-300 text-sm"
+                placeholder="Acme Inc."
               />
             </div>
             <div>
@@ -183,12 +198,16 @@ export default function SettingsPage() {
           {/* Save button */}
           <div className="flex items-center gap-3">
             <button
-              disabled={saving}
+              disabled={saving || !canSave}
               className="rounded-xl bg-black px-4 py-2 text-sm font-semibold text-white shadow hover:brightness-110 disabled:opacity-60"
             >
               {saving ? 'Saving…' : 'Save changes'}
             </button>
-            {msg && <span className="text-sm text-neutral-600">{msg}</span>}
+            {msg && (
+              <span className={`text-sm ${msg.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+                {msg.text}
+              </span>
+            )}
           </div>
         </form>
       </div>
