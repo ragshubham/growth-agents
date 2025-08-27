@@ -1,106 +1,87 @@
-// app/api/onboarding/route.ts
-export const runtime = "nodejs";
-
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { postToSlack, welcomeBlock } from "@/lib/slack";
 
 export async function POST(req: Request) {
+  // 1) Auth
   const session = await auth();
   if (!session?.user?.email) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
+  // 2) Form data
   const form = await req.formData();
   const skip = form.get("skip");
+  const name = (form.get("companyName") || form.get("name") || "") as string;
+  const timezone = (form.get("timezone") || "UTC") as string;
+  const slackWebhookUrl = (form.get("slackWebhookUrl") || null) as string | null;
 
-  // Current user with company
-  const user = await prisma.user.findUnique({
+  // 3) Fetch user (may be null)
+  const userMaybe = await prisma.user.findUnique({
     where: { email: session.user.email! },
     include: { company: true },
   });
-  if (!user) return new NextResponse("User not found", { status: 404 });
-
-  // Helper: ensure user has a company record (id = cmp_<userId>)
-  async function ensureCompany({
-    name,
-    timezone,
-    slackWebhookUrl,
-  }: {
-    name: string;
-    timezone: string;
-    slackWebhookUrl: string | null;
-  }) {
-    const companyId = user.companyId ?? `cmp_${user.id}`;
-
-    await prisma.company.upsert({
-      where: { id: companyId },
-      update: {
-        name,
-        timezone,
-        slackWebhookUrl,
-        updatedAt: new Date(),
-      },
-      create: {
-        id: companyId,
-        name,
-        timezone,
-        slackWebhookUrl,
-      },
-    });
-
-    if (!user.companyId) {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { companyId },
-      });
-    }
-
-    return { companyId };
+  if (!userMaybe) {
+    return new NextResponse("User not found", { status: 404 });
   }
 
+  // ---- From here on, ONLY use these local vars (no more `user?.`) ----
+  const userId = userMaybe.id;
+  const existingCompanyId = userMaybe.companyId ?? null;
+
+  // 4) Skip flow: ensure user has a company, then return
   if (skip) {
-    // Minimal path: create/link a placeholder company if missing
-    const fallbackName = user.company?.name || "Your Company";
-    const fallbackTz = user.company?.timezone || "UTC";
-    const fallbackWebhook = user.company?.slackWebhookUrl ?? null;
-
-    await ensureCompany({
-      name: fallbackName,
-      timezone: fallbackTz,
-      slackWebhookUrl: fallbackWebhook,
-    });
-
-    // Optional: send welcome if we already have a webhook
-    if (fallbackWebhook) {
-      await postToSlack(fallbackWebhook, welcomeBlock(fallbackName));
+    if (existingCompanyId) {
+      return NextResponse.json({ ok: true, skipped: true, companyId: existingCompanyId });
     }
-
-    return NextResponse.json({ ok: true, skipped: true });
+    const newCompanyId = `cmp_${userId}`;
+    const company = await prisma.company.create({
+      data: {
+        id: newCompanyId,
+        name: name || "My Company",
+        timezone: timezone || "UTC",
+        slackWebhookUrl,
+      },
+    });
+    await prisma.user.update({
+      where: { id: userId },
+      data: { companyId: company.id },
+    });
+    return NextResponse.json({ ok: true, skipped: true, companyId: company.id });
   }
 
-  // Full submit
-  const companyName = (form.get("companyName") || "").toString().trim();
-  const timezone = ((form.get("timezone") || "").toString().trim()) || "UTC";
-  const slackWebhookUrlRaw = (form.get("slackWebhookUrl") || "").toString().trim();
-  const slackWebhookUrl = slackWebhookUrlRaw ? slackWebhookUrlRaw : null;
+  // 5) Normal flow: upsert company, then link user → company (idempotent)
+  const targetCompanyId = existingCompanyId ?? `cmp_${userId}`;
 
-  if (!companyName || !timezone) {
-    return new NextResponse("Missing fields", { status: 400 });
-  }
-
-  await ensureCompany({
-    name: companyName,
-    timezone,
-    slackWebhookUrl,
+  const company = await prisma.company.upsert({
+    where: { id: targetCompanyId },
+    update: {
+      name: name || undefined,
+      timezone: timezone || undefined,
+      slackWebhookUrl, // nullable is fine
+    },
+    create: {
+      id: targetCompanyId,
+      name: name || "My Company",
+      timezone: timezone || "UTC",
+      slackWebhookUrl,
+    },
   });
 
-  // Send welcome/test ping using the freshest webhook (form > existing)
-  const webhookToUse = slackWebhookUrl ?? user.company?.slackWebhookUrl ?? null;
-  if (webhookToUse) {
-    await postToSlack(webhookToUse, welcomeBlock(companyName));
+  if (existingCompanyId !== company.id) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { companyId: company.id },
+    });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    companyId: company.id,
+    company: {
+      name: company.name,
+      timezone: company.timezone,
+      slackWebhookUrl: company.slackWebhookUrl,
+    },
+  });
 }
