@@ -1,81 +1,54 @@
 // app/api/slack/test/route.ts
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { NextResponse } from 'next/server';
+import { auth } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { pickSlackWebhook, postToSlack, isValidSlackWebhook } from '@/lib/notify';
 
-// Reuse the same Slack URL validation
-function isSlackWebhook(url: string | null | undefined) {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    if (u.hostname !== "hooks.slack.com") return false;
-    const parts = u.pathname.split("/").filter(Boolean); // ['services','T...','B...','...']
-    return parts[0] === "services" && parts.length === 4;
-  } catch {
-    return false;
+export async function POST(req: Request) {
+  const session = await auth();
+  if (!session?.user?.email) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
   }
-}
 
-export async function POST() {
+  const user = await prisma.user.findUnique({
+    where: { email: session.user.email! },
+    include: { company: true },
+  });
+  if (!user?.company) {
+    return NextResponse.json({ ok: false, error: 'Company not found' }, { status: 404 });
+  }
+
+  const body = await req.json().catch(() => ({} as any));
+  const target = (body.target as 'global' | 'summary' | 'brand') || 'global';
+  const brand = (body.brand as string) || undefined;
+
+  let webhook: string | null = null;
+  if (target === 'global') webhook = user.company.slackWebhookUrl || null;
+  else if (target === 'summary') webhook = pickSlackWebhook({ company: user.company, purpose: 'summary' });
+  else if (target === 'brand') webhook = pickSlackWebhook({ company: user.company, purpose: 'alert', brandName: brand });
+
+  if (!webhook || !isValidSlackWebhook(webhook)) {
+    return NextResponse.json({ ok: false, error: 'No valid webhook configured for this target.' }, { status: 400 });
+  }
+
+  const payload = {
+    text: 'Shield Agent — Test',
+    blocks: [
+      { type: 'header', text: { type: 'plain_text', text: 'Shield Agent — Test', emoji: true } },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `✅ Test message via *${target.toUpperCase()}*${brand ? ` (brand: *${brand}*)` : ''}.\nIf you can see this, routing works.`,
+        },
+      },
+    ],
+  };
+
   try {
-    // Require a signed-in user
-    const session = await auth();
-    const email = session?.user?.email;
-    if (!email) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Look up user + company
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: { company: { select: { name: true, slackWebhookUrl: true } } },
-    });
-
-    const hook = user?.company?.slackWebhookUrl;
-    if (!isSlackWebhook(hook)) {
-      return NextResponse.json(
-        { ok: false, error: "No valid Slack webhook configured" },
-        { status: 400 }
-      );
-    }
-
-    // Test payload
-    const payload = {
-      text: `✅ Shield Agent test: Slack is connected for *${user?.company?.name ?? "your company"}*.`,
-      blocks: [
-        {
-          type: "section",
-          text: { type: "mrkdwn", text: "*Shield Agent* test message :rocket:" },
-        },
-        {
-          type: "context",
-          elements: [
-            { type: "mrkdwn", text: "If you see this, Slack integration is working." },
-          ],
-        },
-      ],
-    };
-
-    // Safe cast since we validated above
-    const resp = await fetch(hook as string, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!resp.ok) {
-      const txt = await resp.text().catch(() => "");
-      return NextResponse.json(
-        { ok: false, error: `Slack responded ${resp.status} ${txt}` },
-        { status: 502 }
-      );
-    }
-
+    await postToSlack(webhook, payload);
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? "Unknown error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: e?.message || 'Failed to send' }, { status: 500 });
   }
 }

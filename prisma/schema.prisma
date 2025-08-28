@@ -1,3 +1,5 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -41,16 +43,16 @@ model User {
   emailVerified DateTime?
   image         String?
 
-  companyId     String?
-  company       Company?  @relation(fields: [companyId], references: [id])
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
 
-  onboarded     Boolean   @default(false) @map("onboardingComplete")
+  onboarded Boolean @default(false) @map("onboardingComplete")
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt @default(now())  // 👈 add @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt // ✅ removed @default(now())
 
-  accounts      Account[]
-  sessions      Session[]
+  accounts Account[]
+  sessions Session[]
 }
 
 model VerificationToken {
@@ -62,25 +64,54 @@ model VerificationToken {
 }
 
 model DigestRun {
-  id        String   @id @default(cuid())
-  company   String?
-  email     String?
-  env       String
-  mode      String   // "cron" | "manual" | "preview"
-  date      DateTime @default(now())
-  alerts    Int
-  success   Boolean
-  error     String?
+  id      String   @id @default(cuid())
+  company String?
+  email   String?
+  env     String
+  mode    String // "cron" | "manual" | "preview"
+  date    DateTime @default(now())
+  alerts  Int
+  success Boolean
+  error   String?
 }
 
 model Company {
-  id              String    @id @default(cuid())
-  name            String
-  timezone        String    @default("UTC")
+  id              String  @id @default(cuid())
+  name            String?
+  timezone        String? @default("Asia/Kolkata")
   slackWebhookUrl String?
   sheetCsvUrl     String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
 
-  users           User[]
+  // NEW prefs
+  minSeverity     String  @default("OK")
+  quietHoursStart String? @default("21:00")
+  quietHoursEnd   String? @default("07:00")
+  digestHourLocal Int?    @default(9)
+
+  summaryWebhookUrl String?   // channel for the one daily summary
+  brandWebhookUrls  Json?     // map: { "Nike": "https://...", "Adidas": "https://..." }
+
+  currencyCode    String  @default("USD") // ISO 4217, e.g. USD, INR, GBP, EUR
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
+
+  // 👇 ADD THIS LINE
+  deliveryLogs DeliveryLog[]
+}
+
+model DeliveryLog {
+  id        String   @id @default(cuid())
+  companyId String?
+  email     String?
+  channel   String // "slack" | "email"
+  status    String // "sent" | "skipped" | "failed"
+  reason    String? // why skipped/failed (hour, quiet, minSeverity, noWebhook, error:XYZ)
+  env       String
+  dry       Boolean
+  createdAt DateTime @default(now())
+
+  company Company? @relation(fields: [companyId], references: [id])
 }
