@@ -1,13 +1,7 @@
 {
   "version": 2,
   "crons": [
-    { 
-      "path": "/api/cron/spend-digest", 
-      "schedule": "30 3 * * *"       // Daily 09:00 IST (03:30 UTC) 
-    },
-    { 
-      "path": "/api/cron/weekly-receipt", 
-      "schedule": "0 11 * * 5"       // Friday 17:00 IST (11:00 UTC) 
-    }
+    { "path": "/api/cron/spend-digest", "schedule": "30 3 * * *" },
+    { "path": "/api/cron/weekly-receipt", "schedule": "0 11 * * 5" }
   ]
 }
