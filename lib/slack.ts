@@ -1,52 +1,107 @@
-export async function postToSlack(webhookUrl: string, payload: any) {
-  if (!webhookUrl) return { ok: false, error: "No webhook" };
-  if (!/^https:\/\/hooks\.slack\.com\/services\//.test(webhookUrl)) {
-    return { ok: false, error: "Invalid Slack webhook URL" };
-  }
+// lib/slack.ts
+import { formatMoney } from '@/lib/money';
+
+export type SlackBlock = Record<string, any>;
+
+/** Post blocks to a Slack webhook. Returns {ok,error?}. */
+export async function postSlack(
+  webhookUrl: string,
+  blocks: SlackBlock[],
+  fallbackText = 'Notification'
+): Promise<{ ok: boolean; error?: string }> {
+  if (!webhookUrl) return { ok: false, error: 'No webhook' };
   try {
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+    const r = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: fallbackText, blocks }),
+      cache: 'no-store',
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return { ok: false, error: `Slack ${res.status}: ${text || res.statusText}` };
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      return { ok: false, error: `Slack ${r.status} ${txt.slice(0, 200)}` };
     }
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message || "Slack fetch error" };
+    return { ok: false, error: e?.message || 'Slack post failed' };
   }
 }
 
-export function welcomeBlock(company: string) {
-  return {
-    text: `Welcome to Shield Agent, ${company || "there"}!`,
-    blocks: [
-      { type: "header", text: { type: "plain_text", text: "👋 Welcome to Shield Agent" } },
-      { type: "section", text: { type: "mrkdwn", text: `*Setup complete!* You’ll start getting digests/alerts here.\n• Company: *${company || "—"}*` } }
-    ]
-  };
+/** Same as above but THROWS if Slack rejects. */
+export async function postToSlack(
+  webhookUrl: string,
+  blocks: SlackBlock[],
+  fallbackText = 'Notification'
+) {
+  const res = await postSlack(webhookUrl, blocks, fallbackText);
+  if (!res.ok) throw new Error(res.error || 'Slack post failed');
 }
 
-// --- added by deploy fix: budget guardrail blocks ---
-export type SlackBlock = {
-  type: 'section' | 'divider' | 'header';
-  text?: { type: 'mrkdwn' | 'plain_text'; text: string };
-};
-
-export function overBudgetBlocks(params: { company: string; account: string; spend: number; cap: number }) {
-  const { company, account, spend, cap } = params;
-  const pct = cap > 0 ? Math.round((spend / cap) * 100) : 0;
+/** Over-budget alert blocks. */
+export function overBudgetBlocks(
+  provider: string,
+  spend: number,
+  cap: number,
+  currency = 'USD'
+): SlackBlock[] {
+  const pct = cap > 0 ? Math.round((spend / Math.max(cap, 1e-9)) * 100) : 0;
   return [
-    { type: 'header', text: { type: 'plain_text', text: 'Budget Guardrail' } },
+    { type: 'header', text: { type: 'plain_text', text: `🚨 Spend Alert: ${provider}`, emoji: true } },
     {
       type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `*Company:* ${company}\n*Account:* ${account}\n*Spend today:* ${spend.toFixed(2)} / ${cap.toFixed(0)} (${pct}%)`,
-      },
+      fields: [
+        { type: 'mrkdwn', text: `*Today's Spend*\n${formatMoney(spend, currency)}` },
+        { type: 'mrkdwn', text: `*Guardrail Cap*\n${formatMoney(cap, currency)}` },
+        { type: 'mrkdwn', text: `*Over by*\n${pct}%` },
+      ],
     },
-    { type: 'divider' },
-  ] as SlackBlock[];
+  ];
 }
+
+/** Daily spend digest blocks. */
+export function spendDigestBlocks(opts: {
+  company: string;
+  currency: string;
+  metaSpend: number;
+  impressions?: number;
+  clicks?: number;
+  cap?: number;
+  over?: boolean;
+  note?: string;
+}): SlackBlock[] {
+  const { company, currency, metaSpend, impressions = 0, clicks = 0, cap = 0, over = false, note } = opts;
+
+  const blocks: SlackBlock[] = [
+    { type: 'header', text: { type: 'plain_text', text: `Daily Spend — ${company}`, emoji: true } },
+  ];
+
+  if (note) {
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `:warning: _${note}_` } });
+  }
+
+  blocks.push({
+    type: 'section',
+    fields: [
+      { type: 'mrkdwn', text: `*Meta*\n${formatMoney(metaSpend, currency)}` },
+      { type: 'mrkdwn', text: `*Impressions*\n${Number(impressions).toLocaleString()}` },
+      { type: 'mrkdwn', text: `*Clicks*\n${Number(clicks).toLocaleString()}` },
+      { type: 'mrkdwn', text: `*Guardrail*\n${cap ? formatMoney(cap, currency) : '—'}` },
+    ],
+  });
+
+  blocks.push({
+    type: 'context',
+    elements: [
+      { type: 'mrkdwn', text: over ? ':rotating_light: *Over budget today!*' : ':white_check_mark: On track' },
+    ],
+  });
+
+  blocks.push({ type: 'divider' });
+  blocks.push({
+    type: 'context',
+    elements: [{ type: 'mrkdwn', text: 'Guardrail compares today’s spend to your daily cap. Edit in *Settings → Company*.' }],
+  });
+
+  return blocks;
+}
+
