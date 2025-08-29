@@ -60,7 +60,16 @@ export async function GET(req: Request) {
         throw err;
       }
 
-      const graph = new URL(`https://graph.facebook.com/v20.0/act_${AD}/insights`);
+      const accountId = (process.env.META_AD_ACCOUNT_ID || '').replace(/^act_/, ''); // strip act_ if present
+      const TOKEN = process.env.META_ACCESS_TOKEN;
+      if (!accountId || !TOKEN) {
+        const miss = !accountId ? 'META_AD_ACCOUNT_ID' : 'META_ACCESS_TOKEN';
+        const err: any = new Error(`Missing ${miss}`);
+        err.status = 500;
+        throw err;
+      }
+      const graph = new URL(`https://graph.facebook.com/v20.0/act_${accountId}/insights`);
+
       graph.searchParams.set('date_preset', 'today');
       graph.searchParams.set('fields', 'spend,impressions,clicks');
       graph.searchParams.set('access_token', TOKEN);
