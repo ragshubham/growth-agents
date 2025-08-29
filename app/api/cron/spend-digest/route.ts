@@ -4,28 +4,28 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { postToSlack } from "@/lib/slack";
 
-function iso(date = new Date()) {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(date.getUTCDate()).padStart(2, "0");
+function isoUTCToday() {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(now.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
 
 /**
  * GET /api/cron/spend-digest?dry=1
- * Auth: Authorization: Bearer <CRON_SECRET>
+ * Auth: either Authorization: Bearer <CRON_SECRET> OR x-vercel-cron: 1
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const dry = url.searchParams.get("dry") === "1";
 
-  // ---- Auth (CRON_SECRET) ----
+  // ---- Auth (CRON_SECRET or Vercel Cron) ----
   const auth = req.headers.get("authorization") || "";
-  const token = (auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : "");
+  const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : "";
   const isVercelCron = req.headers.get("x-vercel-cron") === "1";
   if (!isVercelCron && (!token || token !== process.env.CRON_SECRET)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  }
   }
 
   try {
@@ -40,35 +40,39 @@ export async function GET(req: Request) {
         dailyMetaCap: true,
       },
     });
-    if (!company) return NextResponse.json({ ok: false, error: "no company configured" }, { status: 400 });
+    if (!company) {
+      return NextResponse.json({ ok: false, error: "no company configured" }, { status: 400 });
+    }
 
     const currency = company.currencyCode || "USD";
     const cap = company.dailyMetaCap ?? 0;
     const webhook = company.summaryWebhookUrl || company.slackWebhookUrl;
 
     // ---- Meta Graph API (direct) ----
-    const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN!;
-    const ACT = (process.env.META_AD_ACCOUNT_ID || "").replace(/^act[_=]?/, "act_");
+    const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+    let ACT = process.env.META_AD_ACCOUNT_ID || "";
+    ACT = ACT.replace(/^act[_=]?/, "act_");
     if (!ACCESS_TOKEN || !ACT) {
-      throw new Error("META env vars missing");
+      return NextResponse.json({ ok: false, error: "META env vars missing" }, { status: 500 });
     }
 
-    // Today in UTC (Meta time range is inclusive)
-    const today = iso(); // YYYY-MM-DD
+    const today = isoUTCToday(); // YYYY-MM-DD UTC
     const params = new URLSearchParams({
       time_range: JSON.stringify({ since: today, until: today }),
       fields: "spend,impressions,clicks",
       level: "account",
       access_token: ACCESS_TOKEN,
     });
-
     const graphURL = `https://graph.facebook.com/v19.0/${ACT}/insights?${params.toString()}`;
-    const r = await fetch(graphURL, { method: "GET", cache: "no-store" });
-    const txt = await r.text();
-    if (!r.ok) throw new Error(`meta insights ${r.status}: ${txt}`);
 
-    const j = JSON.parse(txt);
-    const row = Array.isArray(j.data) ? j.data[0] || {} : {};
+    const r = await fetch(graphURL, { method: "GET", cache: "no-store" });
+    const bodyText = await r.text();
+    if (!r.ok) {
+      return NextResponse.json({ ok: false, error: `meta insights ${r.status}: ${bodyText}` }, { status: 502 });
+    }
+
+    const j = JSON.parse(bodyText);
+    const row = Array.isArray(j.data) ? j.data[0] ?? {} : {};
     const spend = Number(row.spend ?? 0);
     const impressions = Number(row.impressions ?? 0);
     const clicks = Number(row.clicks ?? 0);
