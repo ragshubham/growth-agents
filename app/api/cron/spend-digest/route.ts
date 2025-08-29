@@ -4,7 +4,6 @@ import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { localYMD } from '@/lib/date';
 import { withRetries } from '@/lib/retry';
-// import { fetchMetaNumbers } from '@/lib/meta'; // your existing code if factored out
 import { postToSlack } from '@/lib/slack';
 
 type MetaResp = {
@@ -46,13 +45,38 @@ export async function GET(req: Request) {
 
   const { date: runDate, ymd } = localYMD(company.timezone || 'Asia/Kolkata');
 
-  // ---- Fetch Meta with safe retries (use your existing implementation) ----
+  // ---- Fetch Meta with safe retries ----
   const meta: MetaResp = await withRetries(async () => {
-    // If you already have working code inline in this file, keep it and just return in this shape:
-    // const { spend, impressions, clicks, source } = await existingMetaFetch();
-    // return { spend, impressions, clicks, source };
-    // Or if you have a helper: return await fetchMetaNumbers(company);
-    throw new Error('Wire your existing Meta fetch here: return { spend, impressions, clicks, source: "meta-graph" }');
+    const AD = process.env.META_AD_ACCOUNT_ID;
+    const TOKEN = process.env.META_ACCESS_TOKEN;
+    if (!AD || !TOKEN) {
+      const miss = !AD ? 'META_AD_ACCOUNT_ID' : 'META_ACCESS_TOKEN';
+      const err: any = new Error(`Missing ${miss}`);
+      err.status = 500;
+      throw err;
+    }
+
+    const graph = new URL(`https://graph.facebook.com/v20.0/act_${AD}/insights`);
+    graph.searchParams.set('date_preset', 'today');
+    graph.searchParams.set('fields', 'spend,impressions,clicks');
+    graph.searchParams.set('access_token', TOKEN);
+
+    const res = await fetch(graph.toString(), { cache: 'no-store' });
+    if (!res.ok) {
+      const body = await res.text();
+      const err: any = new Error(`Meta insights ${res.status}`);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+
+    const json: any = await res.json();
+    const row = json?.data?.[0] ?? {};
+    const spend = Number(row.spend ?? 0);
+    const impressions = Number(row.impressions ?? 0);
+    const clicks = Number(row.clicks ?? 0);
+
+    return { spend, impressions, clicks, source: 'meta-graph' as const };
   }, { retries: 2, baseMs: 600 });
 
   const cap = company.dailyMetaCap ?? 0;
@@ -97,17 +121,15 @@ export async function GET(req: Request) {
   let posted = false;
   let errorJson: string | undefined;
 
-  if (!dry) {
+  if (!dry && company.slackWebhookUrl) {
     try {
-      // Compose your message (numbers must come from code, not LLM)
       const overCap = cap > 0 && meta.spend >= cap;
       const nearCap = cap > 0 && meta.spend >= 0.8 * cap;
       const title = overCap ? 'CRIT: Meta daily cap hit'
-                  : nearCap ? 'WARN: Meta spend nearing cap'
-                  : 'Daily spend digest';
+                            : nearCap ? 'WARN: Meta spend nearing cap'
+                            : 'Daily spend digest';
 
-      // ✅ FIX: pass blocks array (your postToSlack likely expects SlackBlock[])
-      await postToSlack(company.slackWebhookUrl!, [
+      await postToSlack(company.slackWebhookUrl, [
         { type: 'header', text: { type: 'plain_text', text: `${title} — ${ymd}` } },
         { type: 'section', text: { type: 'mrkdwn', text:
           `*Spend:* ${company.currencyCode} ${meta.spend.toFixed(2)}\n` +
