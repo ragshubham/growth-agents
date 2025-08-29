@@ -133,7 +133,7 @@ export async function GET(req: Request) {
       const text = `${prefix}\n\n${formatSlackDigest(payload)}`;
 
       if (!dry) {
-        const res = await postToSlack(webhook, text); // your helper accepts plain string
+        const res = await postToSlack(webhook, [{ type: "section", text: { type: "mrkdwn", text } }] as any); // your helper accepts plain string
         if ((res as any)?.ok === false) {
           console.error('Slack error:', (res as any)?.error);
         } else {
