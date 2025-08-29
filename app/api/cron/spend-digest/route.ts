@@ -21,9 +21,11 @@ export async function GET(req: Request) {
 
   // ---- Auth (CRON_SECRET) ----
   const auth = req.headers.get("authorization") || "";
-  const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : "";
-  if (!token || token !== process.env.CRON_SECRET) {
+  const token = (auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : "");
+  const isVercelCron = req.headers.get("x-vercel-cron") === "1";
+  if (!isVercelCron && (!token || token !== process.env.CRON_SECRET)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
   }
 
   try {
