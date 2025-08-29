@@ -23,7 +23,7 @@ type StatusColor = typeof STATUS_COLOR[keyof typeof STATUS_COLOR];
    CONFIG
    ===================================================== */
 const CALENDLY_URL = 'https://calendly.com/ragshubham/30min';
-const SITE = { brand: 'Growth Agents', supportEmail: 'founders@growthagents.com' };
+const SITE = { brand: 'Growth Agents', supportEmail: 'founders@growthagents.io' };
 const PLATFORMS = [
   { label: 'Meta', color: '#1877F2' },
   { label: 'Google', color: '#4285F4' },

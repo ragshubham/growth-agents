@@ -12,6 +12,7 @@ type SettingsResp = {
   summaryWebhookUrl?: string;
   brandWebhookUrls?: Record<string, string>;
   currencyCode?: string;
+  dailyMetaCap?: number; // NEW
   error?: string;
 };
 
@@ -28,6 +29,7 @@ export default function SettingsPage() {
     summaryWebhookUrl: '',
     brandWebhookUrlsText: '',
     currencyCode: 'USD',
+    dailyMetaCap: 0, // NEW
   });
 
   // helpers
@@ -62,6 +64,7 @@ export default function SettingsPage() {
       summaryWebhookUrl: data.summaryWebhookUrl || '',
       brandWebhookUrlsText: mapToTextareaLines(data.brandWebhookUrls),
       currencyCode: (data.currencyCode || 'USD').toUpperCase(),
+      dailyMetaCap: typeof data.dailyMetaCap === 'number' ? data.dailyMetaCap : 0, // NEW
     });
   }
 
@@ -96,9 +99,10 @@ export default function SettingsPage() {
         summaryWebhookUrl: form.summaryWebhookUrl,
         brandWebhookUrlsText: form.brandWebhookUrlsText,
         currencyCode: form.currencyCode.toUpperCase(),
+        dailyMetaCap: Number(form.dailyMetaCap), // NEW
       };
       const res = await fetch('/api/settings', {
-        method: 'PUT',
+        method: 'POST', // switched to POST to match your API
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -107,8 +111,7 @@ export default function SettingsPage() {
         setMsg({ text: j?.error || 'Save failed', ok: false });
       } else {
         setMsg({ text: 'Saved ✓', ok: true });
-        // re-load to reflect normalized/uppercased server values
-        await loadSettings();
+        await loadSettings(); // normalize/refresh
       }
     } catch (e: any) {
       setMsg({ text: e?.message || 'Save failed', ok: false });
@@ -176,6 +179,22 @@ export default function SettingsPage() {
                 ))}
               </select>
               <p className="mt-1 text-[11px] text-neutral-500">Used for budgets, projections, and spend.</p>
+            </div>
+
+            {/* NEW: Daily Meta Cap */}
+            <div>
+              <label className="block text-xs mb-1 text-neutral-600">Daily Meta Spend Guardrail</label>
+              <input
+                type="number"
+                min={0}
+                value={form.dailyMetaCap}
+                onChange={(e) => setForm({ ...form, dailyMetaCap: Number(e.target.value) })}
+                className="w-full px-3 py-2 rounded-lg border border-neutral-300 text-sm"
+                placeholder="e.g. 100"
+              />
+              <p className="mt-1 text-[11px] text-neutral-500">
+                Max allowed Meta spend per day (in {form.currencyCode}). Shield flags “Over budget” if today’s spend exceeds this.
+              </p>
             </div>
           </section>
 

@@ -23,6 +23,9 @@ import {
   Target,
 } from 'lucide-react';
 
+// 👇 NEW: read active brand (from brandId cookie)
+import { getActiveBrand } from '@/lib/brand';
+
 /* ----------------------------- Types ----------------------------- */
 
 type HealthResp = { db?: string; resend?: string; cron?: string };
@@ -35,7 +38,7 @@ type SettingsResp = {
   summaryWebhookUrl?: string;
   brandWebhookUrls?: Record<string, string>;
   sheetCsvUrl?: string;
-  currencyCode?: string; // <-- currency returned by /api/settings
+  currencyCode?: string; // <-- used as fallback
   error?: string;
 };
 
@@ -75,6 +78,9 @@ export default async function DashboardPage() {
   });
   if (!user?.companyId) redirect('/onboarding');
 
+  // 👇 NEW: find the active brand for this user (from cookie, fallback to first)
+  const brand = await getActiveBrand();
+
   // Fetch (relative URLs -> cookies forwarded automatically)
   const [settings, alerts, digestPreview, health] = await Promise.all([
     getJSON<SettingsResp>('/api/settings').catch(() => ({ ok: false } as SettingsResp)),
@@ -83,8 +89,8 @@ export default async function DashboardPage() {
     getJSON<HealthResp>('/api/health').catch(() => ({} as HealthResp)),
   ]);
 
-  // Currency (defaults to USD if not set)
-  const currency = (settings?.currencyCode || 'USD').toUpperCase();
+  // Currency precedence: Brand → Settings → USD
+  const currency = (brand?.currencyCode || settings?.currencyCode || 'USD').toUpperCase();
 
   // Coverage / routing
   const brands = Object.keys(settings?.brandWebhookUrls || {});
@@ -195,17 +201,16 @@ export default async function DashboardPage() {
         </div>
       </section>
 
-      {/* PRIMARY: Tracking + Spend (force equal heights) */}
-      <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pb-2">
-        <div className="grid gap-6 lg:grid-cols-2 [grid-auto-rows:1fr]">
-          <TrackingMonitorCard />
-          {/* Pass currency to the Spend card */}
-          <SpendGuardrailCard currencyCode={currency} />
-        </div>
+      {/* PRIMARY: Tracking + Spend */}
+      <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 grid grid-cols-1 gap-6 lg:grid-cols-2 items-stretch pb-2">
+        <TrackingMonitorCard />
+        {/* Pass currency resolved from Brand (fallback to Settings) */}
+        <SpendGuardrailCard currencyCode={currency} />
       </section>
 
       {/* RECOMMENDATIONS */}
       <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+        {/* Pass currency resolved from Brand (fallback to Settings) */}
         <RecommendationsCard currencyCode={currency} />
       </section>
 

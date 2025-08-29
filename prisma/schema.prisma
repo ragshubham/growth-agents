@@ -10,6 +10,10 @@ datasource db {
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
+/* =========================
+   NextAuth base models
+   ========================= */
+
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -26,6 +30,7 @@ model Account {
   user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Session {
@@ -34,6 +39,8 @@ model Session {
   userId       String
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model User {
@@ -49,10 +56,16 @@ model User {
   onboarded Boolean @default(false) @map("onboardingComplete")
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt // ✅ removed @default(now())
+  updatedAt DateTime @updatedAt
 
-  accounts Account[]
-  sessions Session[]
+  accounts    Account[]
+  sessions    Session[]
+
+  // NEW: OAuth Connections owned by this user (Meta/Google Ads tokens)
+  connections Connection[]
+
+  // (Optional) who attached an ad account (see AdAccount.connectedBy)
+  adAccountsConnected AdAccount[] @relation("AdAccountConnectedBy")
 }
 
 model VerificationToken {
@@ -62,6 +75,10 @@ model VerificationToken {
 
   @@unique([identifier, token])
 }
+
+/* =========================
+   Existing product models
+   ========================= */
 
 model DigestRun {
   id      String   @id @default(cuid())
@@ -96,22 +113,93 @@ model Company {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users User[]
+  users         User[]
+  deliveryLogs  DeliveryLog[]
 
-  // 👇 ADD THIS LINE
-  deliveryLogs DeliveryLog[]
+  // NEW: brands/workspaces under this company
+  brands        Brand[]
+
+  @@index([name])
 }
 
 model DeliveryLog {
   id        String   @id @default(cuid())
   companyId String?
   email     String?
-  channel   String // "slack" | "email"
-  status    String // "sent" | "skipped" | "failed"
-  reason    String? // why skipped/failed (hour, quiet, minSeverity, noWebhook, error:XYZ)
+  channel   String   // "slack" | "email"
+  status    String   // "sent" | "skipped" | "failed"
+  reason    String?  // why skipped/failed (hour, quiet, minSeverity, noWebhook, error:XYZ)
   env       String
   dry       Boolean
   createdAt DateTime @default(now())
 
   company Company? @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, createdAt])
+}
+
+/* =========================
+   NEW for multi-brand + integrations
+   ========================= */
+
+// Brand = workspace (e.g., "Nike US"). Users switch active Brand in UI.
+// Each Brand can have multiple ad accounts across providers.
+model Brand {
+  id           String     @id @default(cuid())
+  companyId    String
+  name         String
+  currencyCode String     @default("USD")
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  company      Company    @relation(fields: [companyId], references: [id])
+  adAccounts   AdAccount[]
+
+  @@index([companyId])
+  @@unique([companyId, name]) // prevent duplicate brand names per company
+}
+
+// Connection = OAuth grant per user/provider (Meta/Google Ads)
+// Separate from NextAuth.Account so you control scopes/rotation distinctly.
+model Connection {
+  id            String    @id @default(cuid())
+  userId        String
+  provider      String    // "meta" | "google_ads"
+  accessToken   String
+  refreshToken  String?
+  expiresAt     DateTime?
+  scope         String?
+  profileJson   Json?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user          User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([provider])
+}
+
+// AdAccount = provider account attached to a Brand
+// e.g., provider="meta", externalId="act_1234567890"; provider="google_ads", externalId="1234567890"
+model AdAccount {
+  id           String   @id @default(cuid())
+  brandId      String
+  provider     String
+  externalId   String
+  name         String
+  currency     String?
+  connectedBy  String?  // User.id who attached this account
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  brand        Brand    @relation(fields: [brandId], references: [id])
+
+  // Who connected it (optional)
+  connectedByUser User? @relation("AdAccountConnectedBy", fields: [connectedBy], references: [id])
+
+  @@index([brandId])
+  @@unique([provider, externalId]) // de-dupe same account across users/brands
 }
