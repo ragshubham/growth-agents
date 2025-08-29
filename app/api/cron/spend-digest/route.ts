@@ -1,120 +1,111 @@
 export const runtime = "nodejs";
-// app/api/cron/spend-digest/route.ts
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { postToSlack } from '@/lib/slack';
 
-/** ---- AUTH: supports 3 ways ----
- *  1) Authorization: Bearer <CRON_SECRET>
- *  2) Vercel scheduler header in prod (x-vercel-cron)
- *  3) ?key=<CRON_SECRET> query param (keeps your current vercel.json working)
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { postToSlack } from "@/lib/slack";
+
+/**
+ * GET /api/cron/spend-digest?dry=1
+ * Auth: Authorization: Bearer <CRON_SECRET>
  */
-function isAuthorized(req: Request) {
-  const url = new URL(req.url);
-  const key = url.searchParams.get('key');
-
-  const bearer = req.headers.get('authorization');
-  const byHeader = bearer === `Bearer ${process.env.CRON_SECRET}`;
-
-  const byQuery = !!key && key === process.env.CRON_SECRET;
-
-  const byVercelCron = !!process.env.VERCEL && !!req.headers.get('x-vercel-cron');
-
-  return byHeader || byQuery || byVercelCron;
-}
-
-/** Build a simple, readable Slack blocks digest */
-function digestBlocks(opts: {
-  company: string;
-  currency: string;
-  spend: number;
-  impressions: number;
-  clicks: number;
-  cap: number;
-  over: boolean;
-}) {
-  const { company, currency, spend, impressions, clicks, cap, over } = opts;
-  const money = (n: number) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(n);
-
-  return [
-    {
-      type: 'header',
-      text: { type: 'plain_text', text: `📊 Daily Ad Spend — ${company}` },
-    },
-    {
-      type: 'section',
-      fields: [
-        { type: 'mrkdwn', text: `*Today's Spend:*\n${money(spend)}` },
-        { type: 'mrkdwn', text: `*Guardrail Cap:*\n${cap ? money(cap) : '—'}` },
-        { type: 'mrkdwn', text: `*Impressions:*\n${impressions.toLocaleString()}` },
-        { type: 'mrkdwn', text: `*Clicks:*\n${clicks.toLocaleString()}` },
-        { type: 'mrkdwn', text: `*Status:*\n${over ? '🚨 Over budget' : '✅ On track'}` },
-      ],
-    },
-  ];
-}
-
 export async function GET(req: Request) {
-  try {
-    if (!isAuthorized(req)) {
-      return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
-    }
+  const url = new URL(req.url);
+  const dry = url.searchParams.get("dry") === "1";
 
-    // Get your single company (expand to findMany if you support multiple)
+  // --- Auth ----------------------------------------------------
+  const auth = req.headers.get("authorization") || "";
+  const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : "";
+  if (!token || token !== process.env.CRON_SECRET) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  try {
+    // Load company + webhooks
     const company = await prisma.company.findFirst({
       select: {
         id: true,
         name: true,
         currencyCode: true,
-        dailyMetaCap: true,
-        slackWebhookUrl: true,
         summaryWebhookUrl: true,
+        slackWebhookUrl: true,
+        dailyMetaCap: true,
       },
     });
-    if (!company) return NextResponse.json({ ok: false, error: 'No company' }, { status: 400 });
 
-    // Pull real spend from your internal endpoint (already wired to Meta)
-    const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const r = await fetch(`${base}/api/meta/spend`, { cache: 'no-store' });
-    const j = await r.json().catch(() => ({} as any));
+    if (!company) {
+      return NextResponse.json({ ok: false, error: "no company configured" }, { status: 400 });
+    }
 
-    const row = Array.isArray(j?.data) ? j.data[0] : undefined;
-    const spend = row?.spend ? Number(row.spend) : 0;
-    const impressions = row?.impressions ? Number(row.impressions) : 0;
-    const clicks = row?.clicks ? Number(row.clicks) : 0;
+    const currency = company.currencyCode || "USD";
+    const cap = company.dailyMetaCap ?? 0;
+    const webhook = company.summaryWebhookUrl || company.slackWebhookUrl;
 
-    const currency = (company.currencyCode || 'USD').toUpperCase();
-    const cap = typeof company.dailyMetaCap === 'number' ? company.dailyMetaCap : 0;
-    const over = cap > 0 && spend > cap;
+    // --- Fetch today's Meta spend from your internal API --------
+    // Assumes you already have /api/meta/spend reading from Meta Graph API.
+    const base =
+      process.env.NEXT_PUBLIC_BASE_URL ||
+      process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}` ||
+      "https://www.growthagents.io";
 
-    const webhook = company.summaryWebhookUrl || company.slackWebhookUrl || '';
-    if (!webhook) return NextResponse.json({ ok: true, skipped: 'no webhook' });
-
-    const blocks = digestBlocks({
-      company: company.name || 'Company',
-      currency,
-      spend,
-      impressions,
-      clicks,
-      cap,
-      over,
+    const metaResp = await fetch(`${base}/api/meta/spend?date=today`, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      // ensure no cache in serverless
+      cache: "no-store",
     });
 
-    await postToSlack(webhook, blocks);
+    if (!metaResp.ok) {
+      const text = await metaResp.text().catch(() => "");
+      throw new Error(`meta spend failed: HTTP ${metaResp.status} ${text}`);
+    }
+
+    const metaJson = await metaResp.json().catch(() => ({}));
+    // Expect metaJson like { ok: true, data: [{ spend: "34.75", impressions: "...", clicks: "..." }] }
+    // Make this tolerant:
+    const row = (metaJson?.data?.[0]) || metaJson?.data || {};
+    const spend = Number(row.spend ?? 0);
+    const impressions = Number(row.impressions ?? 0);
+    const clicks = Number(row.clicks ?? 0);
+
+    // --- Compose Slack blocks ----------------------------------
+    const over = cap > 0 && spend > cap;
+    const blocks = [
+      { type: "header", text: { type: "plain_text", text: `Daily Spend — ${company.name}`, emoji: true } },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `*Meta*\n${new Intl.NumberFormat(undefined, { style: "currency", currency }).format(spend)}` },
+          { type: "mrkdwn", text: `*Impressions*\n${Number(impressions).toLocaleString()}` },
+          { type: "mrkdwn", text: `*Clicks*\n${Number(clicks).toLocaleString()}` },
+          { type: "mrkdwn", text: `*Guardrail*\n${cap ? new Intl.NumberFormat(undefined, { style: "currency", currency }).format(cap) : "—"}` },
+        ],
+      },
+      {
+        type: "context",
+        elements: [
+          { type: "mrkdwn", text: over ? ":rotating_light: *Over budget today!*" : ":white_check_mark: On track" },
+        ],
+      },
+    ] as any[];
+
+    // --- Post or dry-run ---------------------------------------
+    if (webhook && !dry) {
+      await postToSlack(webhook, blocks as any); // your helper expects blocks
+    }
 
     return NextResponse.json({
       ok: true,
-      posted: true,
+      source: "meta",
+      dry,
       spend,
       impressions,
       clicks,
       cap,
-      over,
+      posted: !!webhook && !dry,
     });
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: e?.message || 'digest cron failed' },
+      { ok: false, error: e?.message || String(e) },
       { status: 500 }
     );
   }
