@@ -1,8 +1,6 @@
-cat > vercel.json <<'EOF'
 {
   "version": 2,
   "crons": [
     { "path": "/api/cron/spend-digest", "schedule": "30 3 * * *" }
   ]
 }
-EOF
