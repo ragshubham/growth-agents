@@ -51,9 +51,7 @@ export async function GET(req: Request) {
     // If you already have working code inline in this file, keep it and just return in this shape:
     // const { spend, impressions, clicks, source } = await existingMetaFetch();
     // return { spend, impressions, clicks, source };
-    // For now, throw if not wired:
-    // return await fetchMetaNumbers(company);
-    // NOTE: Replace the next line with your real fetch.
+    // Or if you have a helper: return await fetchMetaNumbers(company);
     throw new Error('Wire your existing Meta fetch here: return { spend, impressions, clicks, source: "meta-graph" }');
   }, { retries: 2, baseMs: 600 });
 
@@ -108,19 +106,16 @@ export async function GET(req: Request) {
                   : nearCap ? 'WARN: Meta spend nearing cap'
                   : 'Daily spend digest';
 
-      // If you already have a nice blocks template, reuse it here:
-      await postToSlack(company.slackWebhookUrl!, {
-        text: `${title} — ${ymd}`,
-        blocks: [
-          { type: 'header', text: { type: 'plain_text', text: `${title} — ${ymd}` } },
-          { type: 'section', text: { type: 'mrkdwn', text:
-            `*Spend:* ${company.currencyCode} ${meta.spend.toFixed(2)}\n` +
-            `*Impr:* ${meta.impressions}  •  *Clicks:* ${meta.clicks}\n` +
-            (cap ? `*Cap:* ${company.currencyCode} ${cap}\n` : '') +
-            `_Source: ${source}_`
-          }},
-        ],
-      });
+      // ✅ FIX: pass blocks array (your postToSlack likely expects SlackBlock[])
+      await postToSlack(company.slackWebhookUrl!, [
+        { type: 'header', text: { type: 'plain_text', text: `${title} — ${ymd}` } },
+        { type: 'section', text: { type: 'mrkdwn', text:
+          `*Spend:* ${company.currencyCode} ${meta.spend.toFixed(2)}\n` +
+          `*Impr:* ${meta.impressions}  •  *Clicks:* ${meta.clicks}\n` +
+          (cap ? `*Cap:* ${company.currencyCode} ${cap}\n` : '') +
+          `_Source: ${source}_`
+        }},
+      ]);
       posted = true;
     } catch (err: any) {
       errorJson = safeStringify(err);
