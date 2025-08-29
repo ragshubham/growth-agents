@@ -37,12 +37,14 @@ export async function GET(req: Request) {
     // Load company (cron may not have a session)
     const session = await auth().catch(() => null);
     const userEmail = session?.user?.email || null;
-    const user = userEmail ? await prisma.user.findUnique({
-      where: { email: userEmail },
-      include: { company: true },
-    }) : null;
+    const user = userEmail
+      ? await prisma.user.findUnique({
+          where: { email: userEmail },
+          include: { company: true },
+        })
+      : null;
 
-    const company = user?.company ?? await prisma.company.findFirst();
+    const company = user?.company ?? (await prisma.company.findFirst());
     if (!company) {
       return NextResponse.json({ ok: false, error: 'No company found' }, { status: 404 });
     }
@@ -60,16 +62,9 @@ export async function GET(req: Request) {
         throw err;
       }
 
-      const accountId = (process.env.META_AD_ACCOUNT_ID || '').replace(/^act_/, ''); // strip act_ if present
-      const TOKEN = process.env.META_ACCESS_TOKEN;
-      if (!accountId || !TOKEN) {
-        const miss = !accountId ? 'META_AD_ACCOUNT_ID' : 'META_ACCESS_TOKEN';
-        const err: any = new Error(`Missing ${miss}`);
-        err.status = 500;
-        throw err;
-      }
+      // Make prefix-safe: if AD already has "act_", strip it
+      const accountId = AD.replace(/^act_/, '');
       const graph = new URL(`https://graph.facebook.com/v20.0/act_${accountId}/insights`);
-
       graph.searchParams.set('date_preset', 'today');
       graph.searchParams.set('fields', 'spend,impressions,clicks');
       graph.searchParams.set('access_token', TOKEN);
@@ -97,16 +92,21 @@ export async function GET(req: Request) {
 
     // ---- Idempotency: did we already post today? ----
     const existing = await prisma.cronRun.findUnique({
-      where: { companyId_runDate_source: { companyId: company.id, runDate, source } }
+      where: { companyId_runDate_source: { companyId: company.id, runDate, source } },
     });
 
     if (existing?.posted && !dry) {
       return NextResponse.json({
-        ok: true, source, dry, alreadyPosted: true,
+        ok: true,
+        source,
+        dry,
+        alreadyPosted: true,
         spend: Number(existing.spend ?? 0),
-        impressions: meta.impressions, clicks: meta.clicks,
+        impressions: meta.impressions,
+        clicks: meta.clicks,
         cap: Number(existing.cap ?? 0),
-        posted: false, ymd,
+        posted: false,
+        ymd,
       });
     }
 
@@ -138,18 +138,25 @@ export async function GET(req: Request) {
       try {
         const overCap = cap > 0 && meta.spend >= cap;
         const nearCap = cap > 0 && meta.spend >= 0.8 * cap;
-        const title = overCap ? 'CRIT: Meta daily cap hit'
-                              : nearCap ? 'WARN: Meta spend nearing cap'
-                              : 'Daily spend digest';
+        const title = overCap
+          ? 'CRIT: Meta daily cap hit'
+          : nearCap
+          ? 'WARN: Meta spend nearing cap'
+          : 'Daily spend digest';
 
         await postToSlack(company.slackWebhookUrl, [
           { type: 'header', text: { type: 'plain_text', text: `${title} — ${ymd}` } },
-          { type: 'section', text: { type: 'mrkdwn', text:
-            `*Spend:* ${company.currencyCode} ${meta.spend.toFixed(2)}\n` +
-            `*Impr:* ${meta.impressions}  •  *Clicks:* ${meta.clicks}\n` +
-            (cap ? `*Cap:* ${company.currencyCode} ${cap}\n` : '') +
-            `_Source: ${source}_`
-          }},
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text:
+                `*Spend:* ${company.currencyCode} ${meta.spend.toFixed(2)}\n` +
+                `*Impr:* ${meta.impressions}  •  *Clicks:* ${meta.clicks}\n` +
+                (cap ? `*Cap:* ${company.currencyCode} ${cap}\n` : '') +
+                `_Source: ${source}_`,
+            },
+          },
         ]);
         posted = true;
       } catch (err: any) {
@@ -183,13 +190,24 @@ export async function GET(req: Request) {
     // Always return JSON on failure so curl shows something
     const status = e?.status && Number.isInteger(e.status) ? e.status : 500;
     return NextResponse.json(
-      { ok: false, error: String(e?.message || e), details: e?.body ? String(e.body).slice(0, 400) : undefined },
-      { status }
+      {
+        ok: false,
+        error: String(e?.message || e),
+        details: e?.body ? String(e.body).slice(0, 400) : undefined,
+      },
+      { status },
     );
   }
 }
 
 function safeStringify(err: any) {
-  try { return JSON.stringify(err, Object.getOwnPropertyNames(err)); }
-  catch { try { return JSON.stringify({ message: String(err) }); } catch { return 'unknown'; } }
+  try {
+    return JSON.stringify(err, Object.getOwnPropertyNames(err));
+  } catch {
+    try {
+      return JSON.stringify({ message: String(err) });
+    } catch {
+      return 'unknown';
+    }
+  }
 }
