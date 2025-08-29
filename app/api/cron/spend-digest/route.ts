@@ -1,3 +1,4 @@
+export const runtime = "nodejs";
 // app/api/cron/spend-digest/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
