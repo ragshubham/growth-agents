@@ -1,7 +1,7 @@
 // app/api/cron/spend-digest/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { postSlack } from '@/lib/slack';
+import { postToSlack } from '@/lib/slack';
 
 /** ---- AUTH: supports 3 ways ----
  *  1) Authorization: Bearer <CRON_SECRET>
@@ -100,7 +100,7 @@ export async function GET(req: Request) {
       over,
     });
 
-    const res = await postSlack(webhook, blocks);
+    const res = await postToSlack(webhook, blocks);
 
     return NextResponse.json({
       ok: !!res.ok,

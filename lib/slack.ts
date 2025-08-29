@@ -28,3 +28,25 @@ export function welcomeBlock(company: string) {
     ]
   };
 }
+
+// --- added by deploy fix: budget guardrail blocks ---
+export type SlackBlock = {
+  type: 'section' | 'divider' | 'header';
+  text?: { type: 'mrkdwn' | 'plain_text'; text: string };
+};
+
+export function overBudgetBlocks(params: { company: string; account: string; spend: number; cap: number }) {
+  const { company, account, spend, cap } = params;
+  const pct = cap > 0 ? Math.round((spend / cap) * 100) : 0;
+  return [
+    { type: 'header', text: { type: 'plain_text', text: 'Budget Guardrail' } },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Company:* ${company}\n*Account:* ${account}\n*Spend today:* ${spend.toFixed(2)} / ${cap.toFixed(0)} (${pct}%)`,
+      },
+    },
+    { type: 'divider' },
+  ] as SlackBlock[];
+}
