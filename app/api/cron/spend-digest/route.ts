@@ -100,11 +100,11 @@ export async function GET(req: Request) {
       over,
     });
 
-    const res = await postToSlack(webhook, blocks);
+    await postToSlack(webhook, blocks);
 
     return NextResponse.json({
-      ok: !!res.ok,
-      posted: !!res.ok,
+      ok: true,
+      posted: true,
       spend,
       impressions,
       clicks,
