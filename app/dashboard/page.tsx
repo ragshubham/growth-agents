@@ -1,4 +1,6 @@
 // app/dashboard/page.tsx
+export const dynamic = 'force-dynamic'; // always fresh render
+
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { redirect } from 'next/navigation';
@@ -23,8 +25,8 @@ import {
   Target,
 } from 'lucide-react';
 
-// 👇 NEW: read active brand (from brandId cookie)
 import { getActiveBrand } from '@/lib/brand';
+import { fetchCrit } from '@/lib/fetchCrit'; // 👈 added
 
 /* ----------------------------- Types ----------------------------- */
 
@@ -38,7 +40,8 @@ type SettingsResp = {
   summaryWebhookUrl?: string;
   brandWebhookUrls?: Record<string, string>;
   sheetCsvUrl?: string;
-  currencyCode?: string; // <-- used as fallback
+  currencyCode?: string;
+  dailyMetaCap?: number;
   error?: string;
 };
 
@@ -65,6 +68,16 @@ type DigestPreviewResp =
     }
   | { ok: false; error?: string };
 
+// 👇 added
+type CritResp = {
+  ok: boolean;
+  tz: string;
+  window: { start: string; end: string; days: number };
+  yesterday: { ymd: string; crit: boolean };
+  counts: { critLast14: number };
+  series: Array<{ ymd: string; crit: boolean; reason: string[] }>;
+};
+
 /* ----------------------- Server Component ------------------------ */
 
 export default async function DashboardPage() {
@@ -74,23 +87,34 @@ export default async function DashboardPage() {
 
   const user = await prisma.user.findUnique({
     where: { email: session.user.email! },
-    select: { companyId: true },
+    select: { id: true, companyId: true, company: { select: { currencyCode: true } } },
   });
   if (!user?.companyId) redirect('/onboarding');
 
-  // 👇 NEW: find the active brand for this user (from cookie, fallback to first)
+  // Currency: read straight from DB (no API/cookies flakiness)
+  const currency = (user.company?.currencyCode || 'USD').toUpperCase();
+
+  // Still useful elsewhere; keep these server fetches
   const brand = await getActiveBrand();
 
-  // Fetch (relative URLs -> cookies forwarded automatically)
-  const [settings, alerts, digestPreview, health] = await Promise.all([
+  // 👇 added crit to the Promise.all
+  const [settings, alerts, digestPreview, health, crit] = await Promise.all([
     getJSON<SettingsResp>('/api/settings').catch(() => ({ ok: false } as SettingsResp)),
     getJSON<AlertsResp>('/api/alerts').catch(() => ({ ok: false, count: 0, sample: [] } as AlertsResp)),
     getJSON<DigestPreviewResp>('/api/digest?mock=1').catch(() => ({ ok: false } as DigestPreviewResp)),
     getJSON<HealthResp>('/api/health').catch(() => ({} as HealthResp)),
+    fetchCrit().catch(
+      () =>
+        ({
+          ok: false,
+          tz: 'UTC',
+          window: { start: '', end: '', days: 14 },
+          yesterday: { ymd: '', crit: false },
+          counts: { critLast14: 0 },
+          series: [],
+        } as CritResp)
+    ),
   ]);
-
-  // Currency precedence: Brand → Settings → USD
-  const currency = (brand?.currencyCode || settings?.currencyCode || 'USD').toUpperCase();
 
   // Coverage / routing
   const brands = Object.keys(settings?.brandWebhookUrls || {});
@@ -105,11 +129,15 @@ export default async function DashboardPage() {
   const totalAlerts = clampInt(alerts?.count, 0);
   const critAlerts = (alerts?.sample || []).filter((a) => a.severity === 'CRIT').length;
 
-  // Digest summary (best-effort)
+  // Digest summary
   const sOk = digestPreview?.ok ? digestPreview.summary?.ok ?? 0 : 0;
   const sWarn = digestPreview?.ok ? digestPreview.summary?.warn ?? 0 : 0;
   const sCrit = digestPreview?.ok ? digestPreview.summary?.crit ?? 0 : critAlerts;
   const digestItems = sOk + sWarn + sCrit;
+
+  // 👇 added derived CRIT values
+  const critLast14 = crit?.counts?.critLast14 ?? 0;
+  const critYesterday = Boolean(crit?.yesterday?.crit);
 
   // “No-crit streak” estimate (hours)
   const streakHours = estimateNoCritStreakHours(alerts?.sample || []);
@@ -125,7 +153,16 @@ export default async function DashboardPage() {
     <main className="min-h-screen bg-gradient-to-b from-neutral-50 to-white">
       <Topbar email={session.user.email} />
 
-      {/* HERO: Status + KPIs with breathing room */}
+      {/* Debug: what the PAGE is passing down */}
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-3">
+        <div className="text-[11px] text-neutral-500">
+          <span className="inline-block rounded-full bg-neutral-100 px-2 py-1">
+            Dashboard currency (DB): {currency}
+          </span>
+        </div>
+      </div>
+
+      {/* HERO: Status + KPIs */}
       <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_100%_0%,rgba(0,0,0,0.06),transparent_60%)]" />
@@ -144,7 +181,8 @@ export default async function DashboardPage() {
             </div>
 
             {/* KPIs */}
-            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {/* 👇 changed to 4 columns and added CRIT tile */}
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-4">
               <KPI
                 label="Critical alerts (CRIT)"
                 value={formatInt(critAlerts)}
@@ -164,6 +202,14 @@ export default async function DashboardPage() {
                 label="Digest items (today)"
                 value={formatInt(digestItems)}
                 sub={`${sOk} OK • ${sWarn} WARN • ${sCrit} CRIT`}
+              />
+              {/* 👇 new KPI: cap hits from /api/dashboard/crit */}
+              <KPI
+                label="Cap hits (14d)"
+                value={formatInt(critLast14)}
+                tone={critLast14 > 0 ? 'danger' : 'good'}
+                sub={critYesterday ? 'Yesterday: CRIT' : 'Yesterday: OK'}
+                icon={critLast14 > 0 ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
               />
             </div>
 
@@ -204,13 +250,12 @@ export default async function DashboardPage() {
       {/* PRIMARY: Tracking + Spend */}
       <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 grid grid-cols-1 gap-6 lg:grid-cols-2 items-stretch pb-2">
         <TrackingMonitorCard />
-        {/* Pass currency resolved from Brand (fallback to Settings) */}
+        {/* Pass the DB-resolved currency */}
         <SpendGuardrailCard currencyCode={currency} />
       </section>
 
       {/* RECOMMENDATIONS */}
       <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-        {/* Pass currency resolved from Brand (fallback to Settings) */}
         <RecommendationsCard currencyCode={currency} />
       </section>
 
