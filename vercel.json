@@ -2,6 +2,7 @@
   "version": 2,
   "crons": [
     { "path": "/api/cron/spend-digest", "schedule": "30 3 * * *" },
-    { "path": "/api/cron/weekly-receipt", "schedule": "0 11 * * 5" }
+    { "path": "/api/cron/weekly-receipt", "schedule": "0 11 * * 5" },
+    { "path": "/api/cron/meta-daily", "schedule": "0 7 * * *" }
   ]
 }
