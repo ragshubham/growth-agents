@@ -125,6 +125,7 @@ model Company {
   users        User[]
   deliveryLogs DeliveryLog[]
   brands       Brand[]
+  CronRun      CronRun[]
 }
 
 model DeliveryLog {
@@ -209,4 +210,24 @@ model AdAccount {
 
   @@unique([provider, externalId]) // de-dupe same account across users/brands
   @@index([brandId])
+}
+
+model CronRun {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  /// Local business day for the company (e.g. 2025-08-29 in Asia/Kolkata).
+  runDate DateTime
+
+  ranAt     DateTime @default(now())
+  source    String // e.g. "meta-graph" | "csv-fallback"
+  ok        Boolean
+  posted    Boolean // whether a Slack/email post actually happened
+  spend     Decimal? @db.Decimal(12, 2)
+  cap       Decimal? @db.Decimal(12, 2)
+  errorJson String?  @db.Text
+
+  @@unique([companyId, runDate, source]) // idempotency: one record per company+day+source
+  @@index([companyId, runDate])
 }
