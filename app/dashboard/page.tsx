@@ -10,7 +10,6 @@ import RunJobsCard from '@/components/RunJobsCard';
 import TrackingMonitorCard from '@/components/TrackingMonitorCard';
 import SpendGuardrailCard from '@/components/SpendGuardrailCard';
 import RecommendationsCard from '@/components/RecommendationsCard';
-import { fetchCrit } from '@/lib/fetchCrit';
 
 import {
   Bell,
